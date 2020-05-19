@@ -1,10 +1,8 @@
 import tensorflow as tf
-from resnets_utils import *
 import numpy as np
 import cv2
 import os
 import os.path as ops
-import time
 
 TRAINING = tf.Variable(initial_value=True, dtype=tf.bool, trainable=False)
 
@@ -143,7 +141,8 @@ def aux_classification(X,classes=2):
     x = tf.layers.average_pooling2d(x, pool_size=(7, 7), strides=(1,1))
 
     flatten = tf.contrib.layers.flatten(x)
-    logits = tf.layers.dense(flatten, units=classes, activation=tf.nn.softmax)
+    dense1 = tf.layers.dense(flatten, units=64, activation=tf.nn.relu)
+    logits = tf.layers.dense(dense1, units=classes, activation=None)
     return logits
 
 '''
@@ -204,6 +203,8 @@ def ResNet18_antispoofing(X,classes=2):
     input_shape=tf.shape(x)
     x=tf.image.resize_nearest_neighbor(x,(input_shape[1]*2,input_shape[2]*2))
     x = tf.layers.conv2d(x, filters=256, kernel_size=(2, 2), strides=(1, 1), padding='SAME', name='conv_up0')
+    x = tf.layers.batch_normalization(x, axis=3, name='bn_conv_up0')
+    x = tf.nn.relu(x)
     B3=x
     x=tf.concat([B3, A3], axis=-1)
     x= identity_block(x, 3, [512, 512, 512], stage=6, block='a')
@@ -212,6 +213,8 @@ def ResNet18_antispoofing(X,classes=2):
     input_shape=tf.shape(x)
     x=tf.image.resize_nearest_neighbor(x,(input_shape[1]*2,input_shape[2]*2))
     x = tf.layers.conv2d(x, filters=128, kernel_size=(2, 2), strides=(1, 1),padding='SAME', name='conv_up1')
+    x = tf.layers.batch_normalization(x, axis=3, name='bn_conv_up1')
+    x = tf.nn.relu(x)
     B2=x
     x=tf.concat([B2, A2], axis=-1)
     x= identity_block(x, 3, [256, 256, 256], stage=7, block='a')
@@ -220,6 +223,8 @@ def ResNet18_antispoofing(X,classes=2):
     input_shape=tf.shape(x)
     x=tf.image.resize_nearest_neighbor(x,(input_shape[1]*2,input_shape[2]*2))
     x = tf.layers.conv2d(x, filters=64, kernel_size=(2, 2), strides=(1, 1), padding='SAME',name='conv_up2')
+    x = tf.layers.batch_normalization(x, axis=3, name='bn_conv_up2')
+    x = tf.nn.relu(x)    
     B1=x
     x=tf.concat([B1, A1], axis=-1)
     x= identity_block(x, 3, [128, 128, 128], stage=8, block='a')
@@ -228,6 +233,8 @@ def ResNet18_antispoofing(X,classes=2):
     input_shape=tf.shape(x)
     x=tf.image.resize_nearest_neighbor(x,(input_shape[1]*2,input_shape[2]*2))
     x = tf.layers.conv2d(x, filters=32, kernel_size=(2, 2), strides=(1, 1), padding='SAME',name='conv_up3')
+    x = tf.layers.batch_normalization(x, axis=3, name='bn_conv_up3')
+    x = tf.nn.relu(x)     
     B0=x
     x=tf.concat([B0, A0], axis=-1)
     x= identity_block(x, 3, [64, 64, 64], stage=9, block='a')
@@ -236,20 +243,19 @@ def ResNet18_antispoofing(X,classes=2):
     input_shape=tf.shape(x)
     x=tf.image.resize_nearest_neighbor(x,(input_shape[1]*2,input_shape[2]*2))
     x = tf.layers.conv2d(x, filters=3, kernel_size=(2, 2), strides=(1, 1), padding='SAME',name='conv_up4')
-    
+    x = tf.layers.batch_normalization(x, axis=3, name='bn_conv_up4')    
     x = tf.nn.tanh(x)
     CUEMAP=x
     print(x.shape)
     
     #residual add input with output of cuemap, for further aux classification
     x_shortcut=tf.add(x,x_input)    
-    aux = tf.nn.relu(x_shortcut)
+    auxin = tf.nn.relu(x_shortcut)
     
     #aux classification subnetwork,still using a similar resnet tiny network
-    aux= aux_classification(aux,classes)
-    print(aux.shape)
+    auxout= aux_classification(auxin,classes)
   
-    return aux,CUEMAP,C0,C1,C2,C3,C4
+    return auxout,CUEMAP,C0,C1,C2,C3,C4
 
 #parse dataset list
 def parse_imagenet_datasets(path):
@@ -338,31 +344,31 @@ def main():
     #regular L2
     reg_l2 = tf.contrib.layers.apply_regularization(tf.contrib.layers.l2_regularizer(1e-5), tf.trainable_variables())
     
-    loss_aux = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=aux))
+    loss_aux = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=aux))
     
     CUEMAP_HEAD,CUEMAP_BOTTOM=tf.split(CUEMAP,2,axis=0)
     cue_L2_loss=tf.nn.l2_loss(CUEMAP_HEAD)
     
     D0=global_avg_pooling(C0)
-    logits_D0 = tf.layers.dense(D0, units=classes, activation=tf.nn.softmax)
-    loss_D0 = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=logits_D0))
+    logits_D0 = tf.layers.dense(D0, units=classes, activation=None)
+    loss_D0 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=logits_D0))
     
     D1=global_avg_pooling(C1)
-    logits_D1 = tf.layers.dense(D1, units=classes, activation=tf.nn.softmax)
-    loss_D1 = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=logits_D1))
+    logits_D1 = tf.layers.dense(D1, units=classes, activation=None)
+    loss_D1 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=logits_D1))
 
     D2=global_avg_pooling(C2)
-    logits_D2 = tf.layers.dense(D2, units=classes, activation=tf.nn.softmax)
-    loss_D2 = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=logits_D2))
+    logits_D2 = tf.layers.dense(D2, units=classes, activation=None)
+    loss_D2 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=logits_D2))
 
     D3=global_avg_pooling(C3)
-    logits_D3 = tf.layers.dense(D3, units=classes, activation=tf.nn.softmax)
-    loss_D3 = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=logits_D3))
+    logits_D3 = tf.layers.dense(D3, units=classes, activation=None)
+    loss_D3 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=logits_D3))
 
     D4=global_avg_pooling(C4)
-    logits_D4 = tf.layers.dense(D4, units=classes, activation=tf.nn.softmax)
-    loss_D4 = tf.reduce_mean(tf.losses.sparse_softmax_cross_entropy(labels=Y,logits=logits_D4))        
-
+    logits_D4 = tf.layers.dense(D4, units=classes, activation=None)
+    loss_D4 = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(labels=Y,logits=logits_D4))        
+    #step0 loss= 2*loss_aux + 0.00001*cue_L2_loss +0.5*(loss_D0+loss_D1+loss_D2+loss_D3+loss_D4)+0.5*reg_l2 
     loss= 2*loss_aux + 0.00001*cue_L2_loss +0.5*(loss_D0+loss_D1+loss_D2+loss_D3+loss_D4)+0.5*reg_l2
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=learningrate)
     update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
@@ -373,10 +379,8 @@ def main():
     correct = tf.nn.in_top_k(aux, Y, k=1)    
     correct = tf.cast(correct, tf.float16)    
     accuracy = tf.reduce_mean(correct)    
-        
-    #correct_prediction = tf.equal(tf.cast(tf.argmax(loss_aux,1),tf.int32), Y)
-    #accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-    
+       
+   
     saver = tf.train.Saver()
     model_save_dir = 'model/resnet_antispoof'
     if not ops.exists(model_save_dir):
@@ -392,10 +396,13 @@ def main():
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
         saver.restore(sess=sess, save_path=module_file)
-
+        _,steprestore= module_file.split('-')
+        step=int(steprestore)
+        print('continue with step=',step)
+        #step=0
         #get data   
-        step=0
-        lr=0.01
+        
+        lr=0.0001
         sess.run(tf.assign(TRAINING, True))
         for i in range(50000):
             trainbatch_live=sess.run(train_one_batch_live)
@@ -411,18 +418,18 @@ def main():
                 fd.flush()
             if step>0 and step<2000:
                 lr=0.002*step/2000
-            if step>2000 and step<15000: 
+            if step>2000 and step<10000: 
                 lr=0.002   
-            if step>15000 and step<30000:
+            if step>10000 and step<20000:
                 lr=0.001
-            if step>30000 and step<40000:
+            if step>20000 and step<30000:
                 lr=0.0001
-            if step>40000:
+            if step>30000:
                 lr=0.00001
-            if i % 100 == 0:
-                print("step=%d,loss=%f,loss_aux=%f,cue_L2_loss=%f,loss_D0=%f,loss_D1=%f,loss_D2=%f,loss_D3=%f,loss_D4=%f,train_acc=%f"%(i,cost_sess,coss_aux,cue_L2_coss,coss_D0,coss_D1,coss_D2,coss_D3,coss_D4,train_acc))
+            if step % 100 == 0:
+                print("step=%d,loss=%f,loss_aux=%f,cue_L2_loss=%f,loss_D0=%f,loss_D1=%f,loss_D2=%f,loss_D3=%f,loss_D4=%f,train_acc=%f"%(step,cost_sess,coss_aux,cue_L2_coss,coss_D0,coss_D1,coss_D2,coss_D3,coss_D4,train_acc))
             
-            if(i%5000==0):      
+            if(step>100 and step%1000==0):      
                 checkpoint_path = os.path.join(model_save_dir, 'model_baidu_antispoofing_v1.ckpt')                
                 saver.save(sess, checkpoint_path, global_step=step)          
                 sess.run(tf.assign(TRAINING, False))
@@ -434,7 +441,7 @@ def main():
                         testing_acur = testing_acur + sess.run(accuracy, feed_dict={X: testbatch[0], Y: testbatch[1]})
                         testcount=testcount+1
                         #enough for all test fetched
-                        if testcount>780: #one epoch 780x4=all test pics
+                        if testcount>200: #one  1/4 epoch 780x4=all test pics
                             fd.write("testing acurracy: "+ str( testing_acur/testcount)+' \n')
                             print("testing acurracy: "+ str( testing_acur/testcount))
                             break
